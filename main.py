@@ -8,7 +8,7 @@ from typing import Tuple
 import requests
 from PyQt5.QtCore import QObject, pyqtSignal, Qt, QSize, QPropertyAnimation, QEasingCurve, pyqtProperty
 from PyQt5.QtGui import QPixmap, QImage, QFontDatabase, QColor, QPainter
-from PyQt5.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget, QSizePolicy
+from PyQt5.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget, QSizePolicy, QFrame
 from loguru import logger
 from qfluentwidgets import isDarkTheme, ImageLabel
 
@@ -283,6 +283,9 @@ class Plugin(PluginBase):
         if not widget:
             return
 
+        if backgnd := widget.findChild(QFrame, 'backgnd'):
+            backgnd.layout().setContentsMargins(0, 0, 0, 0)
+
         # 清理旧布局
         if title := widget.findChild(QLabel, 'title'):
             title.hide()
@@ -294,7 +297,7 @@ class Plugin(PluginBase):
 
             # 构建新布局
             main_layout = QHBoxLayout()
-            main_layout.setContentsMargins(5, 2, 5, 3)
+            main_layout.setContentsMargins(14, 6, 7, 6)
             main_layout.setSpacing(8)
 
             # 封面区域
@@ -316,11 +319,15 @@ class Plugin(PluginBase):
             # 歌曲信息
             self.title_label = QLabel("未知歌曲")
             self.artist_label = QLabel("未知歌手")
+            self.song_info_layout = QHBoxLayout()
+            self.song_info_layout.setAlignment(Qt.AlignLeft)
+            self.song_info_layout.setSpacing(6)
             info_layout = QVBoxLayout()
             info_layout.setContentsMargins(0, 0, 0, 0)
             info_layout.setSpacing(0)
-            info_layout.addWidget(self.title_label)
-            info_layout.addWidget(self.artist_label)
+            info_layout.addLayout(self.song_info_layout)
+            self.song_info_layout.addWidget(self.title_label)
+            self.song_info_layout.addWidget(self.artist_label)
             right_layout.addLayout(info_layout)
 
             # 歌词区域
