@@ -252,7 +252,12 @@ class Plugin(PluginBase):
                 image_data = base64.b64decode(encoded)
                 pixmap = QPixmap.fromImage(QImage.fromData(image_data))
             elif url.startswith(("http://", "https://")):
-                response = requests.get(url, timeout=3)
+                # 禁用代理设置
+                response = requests.get(
+                    url,
+                    timeout=3,
+                    proxies={'http': None, 'https': None}  # 禁用代理
+                )
                 response.raise_for_status()
                 pixmap = QPixmap.fromImage(QImage.fromData(response.content))
             else:
@@ -261,7 +266,7 @@ class Plugin(PluginBase):
             pixmap = pixmap.scaled(60, 60, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
             self.cover_label.setImage(pixmap)
         except Exception as e:
-            self.cover_label.clear()  # 加载失败时清空显示
+            self.cover_label.clear()
             logger.error(f"封面加载失败: {str(e)}")
 
     def update_content(self, data: dict, widget_name: str):
