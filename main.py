@@ -3,6 +3,7 @@ import json
 import os
 import threading
 from typing import Optional
+from typing import Tuple
 
 import requests
 from PyQt5.QtCore import QObject, pyqtSignal, Qt, QSize, QPropertyAnimation, QEasingCurve, pyqtProperty
@@ -54,7 +55,7 @@ class SSEClient:
         self.session = requests.Session()
 
     @staticmethod
-    def _parse_event_data(event_data: str) -> tuple[str, str]:
+    def _parse_event_data(event_data: str) -> Tuple[str, str]:
         """解析SSE事件数据"""
         event_type, data = "", ""
         for line in event_data.split('\n'):
