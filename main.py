@@ -224,6 +224,11 @@ class Plugin(PluginBase):
         self._current_fg = QColor()
         self._update_progress_colors()
 
+        # 保存上次歌曲信息
+        self.last_song_name = ""
+        self.last_artist = ""
+        self.last_cover_url = ""
+
     def execute(self):
         """插件启动入口"""
         try:
@@ -361,19 +366,34 @@ class Plugin(PluginBase):
             else:
                 self.progress_bar.update_progress(0, 1)
 
-            # 封面更新
-            if new_cover_url := data.get('cover_url'):
-                threading.Thread(
-                    target=self._load_cover_image,
-                    args=(new_cover_url,),
-                    daemon=True
-                ).start()
-            else:
-                self.cover_label.clear()
+            # 获取当前歌曲信息
+            current_song_name = data.get('title', '未知歌曲')
+            current_artist = data.get('artist', '未知')
+            current_cover_url = data.get('cover_url', '')
+
+            # 检查歌曲信息是否变化
+            if (current_song_name != self.last_song_name or
+                    current_artist != self.last_artist or
+                    current_cover_url != self.last_cover_url):
+
+                # 更新封面
+                if current_cover_url:
+                    threading.Thread(
+                        target=self._load_cover_image,
+                        args=(current_cover_url,),
+                        daemon=True
+                    ).start()
+                else:
+                    self.cover_label.clear()
+
+                # 保存当前信息
+                self.last_song_name = current_song_name
+                self.last_artist = current_artist
+                self.last_cover_url = current_cover_url
 
             # 文本信息更新
-            self.title_label.setText(data.get('title', '未知歌曲'))
-            self.artist_label.setText(f"歌手: {data.get('artist', '未知')}")
+            self.title_label.setText(current_song_name)
+            self.artist_label.setText(f"歌手: {current_artist}")
 
             # 歌词处理
             lyrics = data.get('lyrics', '').strip()
@@ -435,8 +455,6 @@ class Plugin(PluginBase):
         is_dark = isDarkTheme()
         text_color = "#FFFFFF" if is_dark else "#333333"
         sub_color = "#CCCCCC" if is_dark else "#666666"
-
-        # 使用字体族名
         font_family = "'HarmonyOS Sans SC'" if self.font_loaded else "sans-serif"
 
         # 标题样式
