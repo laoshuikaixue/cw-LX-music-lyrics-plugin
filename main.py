@@ -5,9 +5,9 @@ import threading
 from typing import Optional
 
 import requests
-from PyQt5.QtCore import QObject, pyqtSignal, Qt, QSize
-from PyQt5.QtGui import QPixmap, QImage, QFontDatabase
-from PyQt5.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout
+from PyQt5.QtCore import QObject, pyqtSignal, Qt, QSize, QPropertyAnimation, QEasingCurve, pyqtProperty
+from PyQt5.QtGui import QPixmap, QImage, QFontDatabase, QColor, QPainter
+from PyQt5.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget, QSizePolicy
 from loguru import logger
 from qfluentwidgets import isDarkTheme, ImageLabel
 
@@ -36,6 +36,8 @@ class MusicData:
         self.song_name = ""
         self.artist = ""
         self.cover_url = ""
+        self.duration = 0.0
+        self.progress = 0.0
 
 
 # 全局数据实例
@@ -74,7 +76,7 @@ class SSEClient:
             response = self.session.get(
                 self.url,
                 headers={'Accept': 'text/event-stream', 'Cache-Control': 'no-cache'},
-                params={'filter': 'lyricLineAllText,name,singer,picUrl'},
+                params={'filter': 'lyricLineAllText,name,singer,picUrl,duration,progress'},
                 stream=True
             )
             response.encoding = 'utf-8'
@@ -105,26 +107,95 @@ class SSEClient:
     @staticmethod
     def _update_music_data(event_type: str, data: str):
         """更新音乐数据到全局状态"""
-        if event_type == 'lyricLineAllText':
-            music_data.lyrics_text = data
-        elif event_type == 'name':
-            music_data.song_name = data
-        elif event_type == 'singer':
-            music_data.artist = data
-        elif event_type == 'picUrl':
-            music_data.cover_url = data
+        try:
+            if event_type == 'lyricLineAllText':
+                music_data.lyrics_text = data
+            elif event_type == 'name':
+                music_data.song_name = data
+            elif event_type == 'singer':
+                music_data.artist = data
+            elif event_type == 'picUrl':
+                music_data.cover_url = data
+            elif event_type == 'duration':
+                music_data.duration = max(float(data), 0.0) if data else 0.0
+            elif event_type == 'progress':
+                music_data.progress = max(float(data), 0.0) if data else 0.0
 
-        update_signal.update_signal.emit({
-            'lyrics': music_data.lyrics_text,
-            'title': music_data.song_name,
-            'artist': music_data.artist,
-            'cover_url': music_data.cover_url
-        }, WIDGET_NAME)
+            update_signal.update_signal.emit({
+                'lyrics': music_data.lyrics_text,
+                'title': music_data.song_name,
+                'artist': music_data.artist,
+                'cover_url': music_data.cover_url,
+                'duration': music_data.duration,
+                'progress': music_data.progress
+            }, WIDGET_NAME)
+        except ValueError as e:
+            logger.warning(f"数据解析失败: {str(e)}")
 
     def stop(self):
         """停止SSE连接"""
         self.running = False
         self.session.close()
+
+
+class ProgressBar(QWidget):
+    """自定义进度条组件"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._progress = 0.0
+        self._duration = 1.0
+        self._animated_progress = 0.0  # 用于动画的进度值
+        self.setFixedHeight(3)
+        self._bg_color = QColor(100, 100, 100, 50)
+        self._fg_color = QColor(255, 255, 255, 200)
+
+        # 创建动画对象
+        self._animation = QPropertyAnimation(self, b"animated_progress")
+        self._animation.setEasingCurve(QEasingCurve.Linear)  # 改为线性动画
+        self._animation.setDuration(100)  # 缩短动画时间到100ms
+
+    @pyqtProperty(float)
+    def animated_progress(self):
+        return self._animated_progress
+
+    @animated_progress.setter
+    def animated_progress(self, value):
+        self._animated_progress = value
+        self.update()
+
+    def update_progress(self, progress: float, duration: float):
+        # 立即停止当前动画
+        self._animation.stop()
+
+        # 设置绝对起止值（无需计算比例）
+        self._animation.setStartValue(self._animated_progress)
+        self._animation.setEndValue(progress)
+
+        # 更新持续时间并启动动画
+        self._duration = max(duration, 0.1)
+        self._animation.start()
+
+    def update_colors(self, bg: QColor, fg: QColor):
+        self._bg_color = bg
+        self._fg_color = fg
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 绘制背景
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self._bg_color)
+        painter.drawRoundedRect(0, 0, self.width(), self.height(), 1.5, 1.5)
+
+        # 计算动画进度宽度
+        progress_width = min(self.width() * (self._animated_progress / self._duration), self.width())
+
+        # 绘制前景
+        painter.setBrush(self._fg_color)
+        painter.drawRoundedRect(0, 0, int(progress_width), self.height(), 1.5, 1.5)
 
 
 class Plugin(PluginBase):
@@ -135,10 +206,7 @@ class Plugin(PluginBase):
         self.method.register_widget(WIDGET_CODE, WIDGET_NAME, WIDGET_WIDTH)
         update_signal.update_signal.connect(self.update_content)
 
-        # 若要引用插件目录的内容，需在目录前添加插件的工作目录：
         self.plugin_dir = self.cw_contexts['PLUGIN_PATH']
-
-        # 字体加载
         self.font_loaded = False
         self._load_custom_font()
 
@@ -149,6 +217,12 @@ class Plugin(PluginBase):
         self.artist_label = None
         self.main_label = None
         self.sub_label = None
+        self.progress_bar: Optional[ProgressBar] = None
+
+        # 颜色跟踪
+        self._current_bg = QColor()
+        self._current_fg = QColor()
+        self._update_progress_colors()
 
     def execute(self):
         """插件启动入口"""
@@ -162,32 +236,36 @@ class Plugin(PluginBase):
     def _load_custom_font(self):
         """加载自定义字体"""
         try:
-            # 构建字体路径
             font_dir = os.path.join(self.plugin_dir, "font")
             font_path = os.path.join(font_dir, "HarmonyOS_Sans_SC_Regular.ttf")
 
-            # 验证字体文件存在性
             if not os.path.exists(font_path):
                 logger.warning(f"字体文件不存在: {font_path}")
                 return
 
-            # 加载字体
             font_id = QFontDatabase.addApplicationFont(font_path)
             if font_id == -1:
-                logger.error("字体加载失败，请检查文件格式")
+                logger.error("字体加载失败")
                 return
 
-            # 获取字体族名称
             families = QFontDatabase.applicationFontFamilies(font_id)
-            if not families:
-                logger.error("字体文件中未找到有效字体族")
-                return
-
-            logger.success(f"字体加载成功: {families[0]}")
-            self.font_loaded = True
-
+            if families:
+                logger.success(f"字体加载成功: {families[0]}")
+                self.font_loaded = True
         except Exception as e:
             logger.error(f"字体加载异常: {str(e)}")
+
+    def _update_progress_colors(self):
+        """更新进度条颜色"""
+        if isDarkTheme():
+            self._current_bg = QColor(255, 255, 255, 50)
+            self._current_fg = QColor(255, 255, 255, 200)
+        else:
+            self._current_bg = QColor(0, 0, 0, 30)
+            self._current_fg = QColor(0, 0, 0, 150)
+
+        if self.progress_bar:
+            self.progress_bar.update_colors(self._current_bg, self._current_fg)
 
     def _setup_ui(self):
         """初始化用户界面"""
@@ -206,10 +284,10 @@ class Plugin(PluginBase):
 
             # 构建新布局
             main_layout = QHBoxLayout()
-            main_layout.setContentsMargins(4, 2, 4, 1)
+            main_layout.setContentsMargins(5, 2, 5, 3)
             main_layout.setSpacing(8)
 
-            # 封面区域（初始为空）
+            # 封面区域
             self.cover_label = ImageLabel()
             self.cover_label.setBorderRadius(6, 6, 6, 6)
             self.cover_label.setFixedSize(QSize(60, 60))
@@ -218,7 +296,12 @@ class Plugin(PluginBase):
             # 右侧信息区域
             right_layout = QVBoxLayout()
             right_layout.setContentsMargins(0, 0, 0, 0)
-            right_layout.setSpacing(1)
+            right_layout.setSpacing(4)
+
+            # 进度条
+            self.progress_bar = ProgressBar()
+            self.progress_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            right_layout.addWidget(self.progress_bar)
 
             # 歌曲信息
             self.title_label = QLabel("未知歌曲")
@@ -252,12 +335,7 @@ class Plugin(PluginBase):
                 image_data = base64.b64decode(encoded)
                 pixmap = QPixmap.fromImage(QImage.fromData(image_data))
             elif url.startswith(("http://", "https://")):
-                # 禁用代理设置
-                response = requests.get(
-                    url,
-                    timeout=3,
-                    proxies={'http': None, 'https': None}  # 禁用代理
-                )
+                response = requests.get(url, timeout=3, proxies={'http': None, 'https': None})  # 禁用代理
                 response.raise_for_status()
                 pixmap = QPixmap.fromImage(QImage.fromData(response.content))
             else:
@@ -275,6 +353,14 @@ class Plugin(PluginBase):
             return
 
         try:
+            # 更新进度条
+            duration = data.get('duration', 0.0)
+            progress = data.get('progress', 0.0)
+            if duration > 0 and progress >= 0:
+                self.progress_bar.update_progress(progress, duration)
+            else:
+                self.progress_bar.update_progress(0, 1)
+
             # 封面更新
             if new_cover_url := data.get('cover_url'):
                 threading.Thread(
@@ -337,6 +423,9 @@ class Plugin(PluginBase):
             else:
                 self.main_label.setFixedHeight(30)
                 self.sub_label.setFixedHeight(0)
+
+            # 更新主题颜色
+            self._update_progress_colors()
 
         except Exception as e:
             logger.error(f"更新失败: {str(e)}")
