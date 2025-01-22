@@ -152,8 +152,8 @@ class ProgressBar(QWidget):
 
         # 创建动画对象
         self._animation = QPropertyAnimation(self, b"animated_progress")
-        self._animation.setEasingCurve(QEasingCurve.Linear)  # 改为线性动画
-        self._animation.setDuration(100)  # 缩短动画时间到100ms
+        self._animation.setEasingCurve(QEasingCurve.Linear)
+        self._animation.setDuration(100)  # 动画时间
 
     @pyqtProperty(float)
     def animated_progress(self):
@@ -228,6 +228,10 @@ class Plugin(PluginBase):
         self.last_song_name = ""
         self.last_artist = ""
         self.last_cover_url = ""
+
+        # 封面加载重试计数器
+        self.current_cover_retries = 0  # 当前封面加载尝试次数
+        self.current_loading_url = ""   # 当前正在加载的封面URL
 
     def execute(self):
         """插件启动入口"""
@@ -333,8 +337,23 @@ class Plugin(PluginBase):
             self._update_theme_styles()
 
     def _load_cover_image(self, url: str):
-        """异步加载封面图片"""
+        """异步加载封面图片（带重试次数限制）"""
         try:
+            # 检查当前URL是否仍然有效
+            if url != self.current_loading_url:
+                logger.debug("封面URL已变更，取消加载")
+                return
+
+            # 检查重试次数
+            if self.current_cover_retries >= 5:
+                logger.info("封面加载失败次数超过5次，不再尝试")
+                self.cover_label.clear()
+                return
+
+            # 增加尝试次数
+            self.current_cover_retries += 1
+            logger.debug(f"开始加载封面，第{self.current_cover_retries}次尝试")
+
             if url.startswith("data:image/"):
                 _, encoded = url.split(",", 1)
                 image_data = base64.b64decode(encoded)
@@ -346,11 +365,20 @@ class Plugin(PluginBase):
             else:
                 return
 
+            # 加载成功后重置计数器
+            self.current_cover_retries = 0
             pixmap = pixmap.scaled(60, 60, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
             self.cover_label.setImage(pixmap)
+            logger.success("封面图片加载成功")
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"封面加载失败，第{self.current_cover_retries}次尝试 ({str(e)})")
+            if self.current_cover_retries >= 5:
+                self.cover_label.clear()
+                logger.info("封面加载失败超过5次，停止尝试")
         except Exception as e:
+            logger.error(f"封面处理异常: {str(e)}")
             self.cover_label.clear()
-            logger.error(f"封面加载失败: {str(e)}")
 
     def update_content(self, data: dict, widget_name: str):
         """更新UI内容"""
@@ -376,8 +404,12 @@ class Plugin(PluginBase):
                     current_artist != self.last_artist or
                     current_cover_url != self.last_cover_url):
 
-                # 更新封面
-                if current_cover_url:
+                # 重置重试计数器并记录当前加载URL
+                self.current_cover_retries = 0
+                self.current_loading_url = current_cover_url
+
+                # 更新封面（仅当URL有效且尝试次数未超限时）
+                if current_cover_url and self.current_cover_retries < 5:
                     threading.Thread(
                         target=self._load_cover_image,
                         args=(current_cover_url,),
@@ -391,7 +423,7 @@ class Plugin(PluginBase):
                 self.last_artist = current_artist
                 self.last_cover_url = current_cover_url
 
-            # 文本信息更新
+            # 文本信息更新（无论是否变化都更新显示）
             self.title_label.setText(current_song_name)
             self.artist_label.setText(f"歌手: {current_artist}")
 
