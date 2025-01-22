@@ -1,279 +1,339 @@
+import base64
 import json
 import threading
 from typing import Optional
 
 import requests
-from PyQt5.QtCore import QObject, pyqtSignal, Qt
-from PyQt5.QtWidgets import QHBoxLayout, QLabel, QWidget, QVBoxLayout, QSizePolicy, QLayout
+from PyQt5.QtCore import QObject, pyqtSignal, Qt, QSize
+from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout
 from loguru import logger
-from qfluentwidgets import isDarkTheme
+from qfluentwidgets import isDarkTheme, ImageLabel
 
 from .ClassWidgets.base import PluginBase
 
+# 组件元数据
 WIDGET_CODE = 'lx-music-lyrics.ui'
 WIDGET_NAME = 'LX-music-Lyrics'
-WIDGET_WIDTH = 300
+WIDGET_WIDTH = 340
 
+# 服务配置
 SSE_URL = 'http://127.0.0.1:23330/subscribe-player-status'
-DEFAULT_LYRIC = '等待音乐软件侧传输歌词...'
+DEFAULT_LYRIC = '等待音乐软件传输数据...'
 
 
 class UpdateSignal(QObject):
-    update_signal = pyqtSignal(str, str)
+    """用于跨线程更新的信号类"""
+    update_signal = pyqtSignal(dict, str)
 
 
-class LyricsData:
+class MusicData:
+    """音乐数据存储结构"""
+
     def __init__(self):
         self.lyrics_text = ""
+        self.song_name = ""
+        self.artist = ""
+        self.cover_url = ""
 
 
-lyrics_data = LyricsData()
+# 全局数据实例
+music_data = MusicData()
 update_signal = UpdateSignal()
 
 
 class SSEClient:
+    """SSE 客户端实现"""
+
     def __init__(self, url: str):
         self.url = url
         self.running = False
         self.session = requests.Session()
 
     @staticmethod
-    def _process_event(event_data: str) -> tuple[str, str]:
-        event_type = ""
-        data = ""
-
+    def _parse_event_data(event_data: str) -> tuple[str, str]:
+        """解析SSE事件数据"""
+        event_type, data = "", ""
         for line in event_data.split('\n'):
             line = line.strip()
             if line.startswith('event:'):
                 event_type = line[6:].strip()
             elif line.startswith('data:'):
                 data = line[5:].strip()
-                try:
-                    if data.startswith('"') and data.endswith('"'):
-                        data = json.loads(data)
+                try:  # 尝试解析JSON数据
+                    data = json.loads(data) if data.startswith(('"', '{')) else data
                 except json.JSONDecodeError:
                     pass
-
         return event_type, data
 
     def start(self):
+        """启动SSE长连接"""
         self.running = True
         try:
-            headers = {
-                'Accept': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive'
-            }
-
             response = self.session.get(
                 self.url,
-                headers=headers,
-                params={'filter': 'lyricLineAllText'},
+                headers={'Accept': 'text/event-stream', 'Cache-Control': 'no-cache'},
+                params={'filter': 'lyricLineAllText,name,singer,picUrl'},
                 stream=True
             )
             response.encoding = 'utf-8'
             response.raise_for_status()
 
-            event_data = []
-
+            event_buffer = []
             for line in response.iter_lines(decode_unicode=True):
                 if not self.running:
                     break
 
                 if line:
-                    event_data.append(line)
-                elif event_data:
-                    event_type, data = self._process_event('\n'.join(event_data))
-                    if event_type == 'lyricLineAllText':
-                        lyrics_data.lyrics_text = data
-                        update_signal.update_signal.emit(
-                            lyrics_data.lyrics_text,
-                            WIDGET_NAME
-                        )
-                    event_data = []
+                    event_buffer.append(line)
+                elif event_buffer:
+                    event_type, data = self._parse_event_data('\n'.join(event_buffer))
+                    self._update_music_data(event_type, data)
+                    event_buffer = []
 
         except requests.RequestException as e:
-            logger.error(f"SSE 连接错误: {str(e)}")
+            logger.error(f"SSE连接错误: {str(e)}")
             if self.running:
-                logger.info("5秒后尝试重新连接...")
                 threading.Timer(5.0, self.start).start()
         except Exception as e:
-            logger.error(f"未预期的错误: {str(e)}")
+            logger.error(f"未预期错误: {str(e)}")
         finally:
             if not self.running:
                 self.stop()
 
+    @staticmethod
+    def _update_music_data(event_type: str, data: str):
+        """更新音乐数据到全局状态"""
+        if event_type == 'lyricLineAllText':
+            music_data.lyrics_text = data
+        elif event_type == 'name':
+            music_data.song_name = data
+        elif event_type == 'singer':
+            music_data.artist = data
+        elif event_type == 'picUrl':
+            music_data.cover_url = data
+
+        update_signal.update_signal.emit({
+            'lyrics': music_data.lyrics_text,
+            'title': music_data.song_name,
+            'artist': music_data.artist,
+            'cover_url': music_data.cover_url
+        }, WIDGET_NAME)
+
     def stop(self):
+        """停止SSE连接"""
         self.running = False
         self.session.close()
 
 
-class Plugin(PluginBase):  # 插件类
-    def __init__(self, cw_contexts, method):  # 初始化
-        super().__init__(cw_contexts, method)  # 调用父类初始化方法
+class Plugin(PluginBase):
+    """主插件实现类"""
 
-        self.method.register_widget(WIDGET_CODE, WIDGET_NAME, WIDGET_WIDTH)  # 注册小组件到CW
-
+    def __init__(self, cw_contexts, method):
+        super().__init__(cw_contexts, method)
         self.method.register_widget(WIDGET_CODE, WIDGET_NAME, WIDGET_WIDTH)
-        self.sse_client: Optional[SSEClient] = None
         update_signal.update_signal.connect(self.update_content)
-        self.lyrics_widget = None
+
+        # UI组件
+        self.sse_client: Optional[SSEClient] = None
+        self.cover_label: Optional[ImageLabel] = None
+        self.title_label = None
+        self.artist_label = None
         self.main_label = None
         self.sub_label = None
 
     def execute(self):
+        """插件启动入口"""
         try:
-            self._setup_widget()
+            self._setup_ui()
             self._start_sse_client()
-            if self.lyrics_widget:
-                title = self.lyrics_widget.findChild(QLabel, 'title')
-                title.hide()
-            logger.success('歌词插件启动成功！')
+            logger.success('插件启动成功')
         except Exception as e:
-            logger.error(f"插件启动失败: {str(e)}")
-            raise
+            logger.error(f"启动失败: {str(e)}")
 
-    def _setup_widget(self):
-        self.lyrics_widget = self.method.get_widget(WIDGET_CODE)
-        if self.lyrics_widget:
-            content_layout = self.lyrics_widget.findChild(QHBoxLayout, 'contentLayout')
-            if content_layout:
-                # 清除content_layout中的所有项
-                while content_layout.count():
-                    item = content_layout.takeAt(0)
+    def _setup_ui(self):
+        """初始化用户界面"""
+        widget = self.method.get_widget(WIDGET_CODE)
+        if not widget:
+            return
+
+        # 清理旧布局
+        if title := widget.findChild(QLabel, 'title'):
+            title.hide()
+        if content_layout := widget.findChild(QHBoxLayout, 'contentLayout'):
+            while content_layout.count():
+                if item := content_layout.takeAt(0):
                     if item.widget():
                         item.widget().deleteLater()
 
-                # 创建容器
-                self.container_widget = QWidget()
-                container_layout = QVBoxLayout(self.container_widget)
-                container_layout.setSpacing(2)
-                container_layout.setContentsMargins(10, 0, 10, 0)  # 添加左右边距
+            # 构建新布局
+            main_layout = QHBoxLayout()
+            main_layout.setContentsMargins(4, 2, 4, 1)
+            main_layout.setSpacing(8)
 
-                # 创建主要歌词标签
-                self.main_label = QLabel(DEFAULT_LYRIC)
-                self.main_label.setWordWrap(False)  # 禁用自动换行
-                self.main_label.setAlignment(Qt.AlignCenter)
-                self.main_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            # 封面区域（初始为空）
+            self.cover_label = ImageLabel()
+            self.cover_label.setBorderRadius(6, 6, 6, 6)
+            self.cover_label.setFixedSize(QSize(60, 60))
+            main_layout.addWidget(self.cover_label)
 
-                # 创建扩展歌词标签
-                self.sub_label = QLabel("")
-                self.sub_label.setWordWrap(False)  # 禁用自动换行
-                self.sub_label.setAlignment(Qt.AlignCenter)
-                self.sub_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-                self.sub_label.hide()
+            # 右侧信息区域
+            right_layout = QVBoxLayout()
+            right_layout.setContentsMargins(0, 0, 0, 0)
+            right_layout.setSpacing(1)
 
-                # 设置容器的大小策略
-                self.container_widget.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+            # 歌曲信息
+            self.title_label = QLabel("未知歌曲")
+            self.artist_label = QLabel("未知歌手")
+            info_layout = QVBoxLayout()
+            info_layout.setContentsMargins(0, 0, 0, 0)
+            info_layout.setSpacing(0)
+            info_layout.addWidget(self.title_label)
+            info_layout.addWidget(self.artist_label)
+            right_layout.addLayout(info_layout)
 
-                # 添加标签到布局
-                container_layout.addWidget(self.main_label)
-                container_layout.addWidget(self.sub_label)
+            # 歌词区域
+            lyrics_layout = QVBoxLayout()
+            lyrics_layout.setContentsMargins(0, 0, 0, 0)
+            lyrics_layout.setSpacing(0)
+            self.main_label = QLabel(DEFAULT_LYRIC)
+            self.sub_label = QLabel()
+            lyrics_layout.addWidget(self.main_label, stretch=3)
+            lyrics_layout.addWidget(self.sub_label, stretch=1)
+            right_layout.addLayout(lyrics_layout)
 
-                # 设置高度
-                self.container_widget.setFixedHeight(50)
+            main_layout.addLayout(right_layout)
+            content_layout.addLayout(main_layout)
+            self._update_theme_styles()
 
-                # 添加容器到主布局
-                content_layout.addWidget(self.container_widget)
-
-                # 设置content_layout的属性
-                content_layout.setSizeConstraint(QLayout.SetMinimumSize)
-
-                self._update_label_styles()
+    def _load_cover_image(self, url: str):
+        """异步加载封面图片"""
+        try:
+            if url.startswith("data:image/"):
+                _, encoded = url.split(",", 1)
+                image_data = base64.b64decode(encoded)
+                pixmap = QPixmap.fromImage(QImage.fromData(image_data))
+            elif url.startswith(("http://", "https://")):
+                response = requests.get(url, timeout=3)
+                response.raise_for_status()
+                pixmap = QPixmap.fromImage(QImage.fromData(response.content))
             else:
-                logger.warning("未找到内容布局")
-        else:
-            logger.warning("未找到小组件")
+                return
 
-    def update_content(self, lyrics_text: str):
-        if not self.main_label or not self.sub_label:
+            pixmap = pixmap.scaled(60, 60, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            self.cover_label.setImage(pixmap)
+        except Exception as e:
+            self.cover_label.clear()  # 加载失败时清空显示
+            logger.error(f"封面加载失败: {str(e)}")
+
+    def update_content(self, data: dict, widget_name: str):
+        """更新UI内容"""
+        if widget_name != WIDGET_NAME:
             return
 
         try:
-            if not lyrics_text.strip():
-                main_text = "●  ●  ●"
-                sub_text = ""
+            # 封面更新
+            if new_cover_url := data.get('cover_url'):
+                threading.Thread(
+                    target=self._load_cover_image,
+                    args=(new_cover_url,),
+                    daemon=True
+                ).start()
             else:
-                lyrics_parts = lyrics_text.split('\n', 1)
-                main_text = lyrics_parts[0] if lyrics_parts else ""
-                sub_text = lyrics_parts[1] if len(lyrics_parts) > 1 else ""
+                self.cover_label.clear()
+
+            # 文本信息更新
+            self.title_label.setText(data.get('title', '未知歌曲'))
+            self.artist_label.setText(f"歌手: {data.get('artist', '未知')}")
+
+            # 歌词处理
+            lyrics = data.get('lyrics', '').strip()
+            if not lyrics:
+                main_text, sub_text = "●  ●  ●", ""
+            else:
+                parts = lyrics.split('\n', 1)
+                main_text = parts[0].strip() if parts else "●  ●  ●"
+                sub_text = parts[1].strip() if len(parts) > 1 else ""
 
             self.main_label.setText(main_text)
+            self.sub_label.setText(sub_text)
 
-            if sub_text:
-                self.sub_label.setText(sub_text)
-                self.sub_label.show()
-                self.main_label.setFixedHeight(25)
-                self.sub_label.setFixedHeight(25)
+            # 动态样式调整
+            has_sub = bool(sub_text)
+            text_color = "#FFFFFF" if isDarkTheme() else "#333333"
 
-                # 计算所需的最小宽度
-                main_width = self.main_label.fontMetrics().boundingRect(main_text).width() + 40
-                sub_width = self.sub_label.fontMetrics().boundingRect(sub_text).width() + 40
-                min_width = max(main_width, sub_width)
+            # 根据歌词行数调整字号
+            main_size = "20px" if has_sub else "24px"
+            self.main_label.setStyleSheet(f"""
+                QLabel {{
+                    font-size: {main_size};
+                    color: {text_color};
+                    font-family: 'HarmonyOS Sans SC';
+                    font-weight: bold;
+                    margin: 0;
+                }}
+            """)
 
-                # 设置容器的最小宽度
-                self.container_widget.setMinimumWidth(min_width)
+            # 布局高度调整
+            if has_sub:
+                self.main_label.setFixedHeight(38)
+                self.sub_label.setFixedHeight(14)
             else:
-                self.sub_label.hide()
-                self.main_label.setFixedHeight(50)
-
-                # 计算单行歌词所需的最小宽度
-                min_width = self.main_label.fontMetrics().boundingRect(main_text).width() + 40
-                self.container_widget.setMinimumWidth(min_width)
+                self.main_label.setFixedHeight(30)
+                self.sub_label.setFixedHeight(0)
 
         except Exception as e:
-            logger.error(f"更新内容失败: {str(e)}")
+            logger.error(f"更新失败: {str(e)}")
 
-    def _update_label_styles(self):
-        if not self.main_label or not self.sub_label:
-            return
-
+    def _update_theme_styles(self):
+        """更新主题相关样式"""
         is_dark = isDarkTheme()
-        main_color = "#FFFFFF" if is_dark else "#000000"
+        text_color = "#FFFFFF" if is_dark else "#333333"
         sub_color = "#CCCCCC" if is_dark else "#666666"
 
-        # 主歌词样式
-        self.main_label.setStyleSheet(f"""
+        # 标题样式
+        self.title_label.setStyleSheet(f"""
             QLabel {{
-                color: {main_color};
-                font-family: "HarmonyOS Sans SC Bold", "Microsoft YaHei", "微软雅黑";
-                font-size: 18px;
-                font-weight: bold;
-                padding: 0px;
-                margin: 0px;
+                color: {text_color};
+                font: bold 13px 'Microsoft YaHei';
+                margin: 0;
+                max-height: 20px;
             }}
         """)
 
-        # 扩展歌词样式
+        # 歌手样式
+        self.artist_label.setStyleSheet(f"""
+            QLabel {{
+                color: {sub_color};
+                font: 11px 'Microsoft YaHei';
+                margin: 0;
+                max-height: 16px;
+            }}
+        """)
+
+        # 副歌词样式
         self.sub_label.setStyleSheet(f"""
             QLabel {{
                 color: {sub_color};
-                font-family: "HarmonyOS Sans SC Bold", "Microsoft YaHei", "微软雅黑";
-                font-size: 16px;
-                font-weight: bold;
-                padding: 0px;
-                margin: 0px;
+                font-size: 14px;
+                font-family: 'HarmonyOS Sans SC';
+                margin: 0;
             }}
         """)
 
     def _start_sse_client(self):
-        def sse_worker():
+        """启动SSE客户端线程"""
+
+        def worker():
             try:
                 self.sse_client = SSEClient(SSE_URL)
                 self.sse_client.start()
             except Exception as e:
-                logger.error(f"SSE 客户端错误: {str(e)}")
+                logger.error(f"SSE连接异常: {str(e)}")
 
-        sse_thread = threading.Thread(target=sse_worker, daemon=True)
-        sse_thread.start()
-
-    def theme_changed(self):
-        self._update_label_styles()
+        threading.Thread(target=worker, daemon=True).start()
 
     def cleanup(self):
+        """清理资源 未引用"""
         if self.sse_client:
-            try:
-                self.sse_client.stop()
-                logger.info("SSE 客户端已停止")
-            except Exception as e:
-                logger.error(f"停止 SSE 客户端失败: {str(e)}")
+            self.sse_client.stop()
