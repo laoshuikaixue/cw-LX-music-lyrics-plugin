@@ -1,11 +1,12 @@
 import base64
 import json
+import os
 import threading
 from typing import Optional
 
 import requests
 from PyQt5.QtCore import QObject, pyqtSignal, Qt, QSize
-from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtGui import QPixmap, QImage, QFontDatabase
 from PyQt5.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout
 from loguru import logger
 from qfluentwidgets import isDarkTheme, ImageLabel
@@ -134,6 +135,13 @@ class Plugin(PluginBase):
         self.method.register_widget(WIDGET_CODE, WIDGET_NAME, WIDGET_WIDTH)
         update_signal.update_signal.connect(self.update_content)
 
+        # 若要引用插件目录的内容，需在目录前添加插件的工作目录：
+        self.plugin_dir = self.cw_contexts['PLUGIN_PATH']
+
+        # 字体加载
+        self.font_loaded = False
+        self._load_custom_font()
+
         # UI组件
         self.sse_client: Optional[SSEClient] = None
         self.cover_label: Optional[ImageLabel] = None
@@ -150,6 +158,36 @@ class Plugin(PluginBase):
             logger.success('插件启动成功')
         except Exception as e:
             logger.error(f"启动失败: {str(e)}")
+
+    def _load_custom_font(self):
+        """加载自定义字体"""
+        try:
+            # 构建字体路径
+            font_dir = os.path.join(self.plugin_dir, "font")
+            font_path = os.path.join(font_dir, "HarmonyOS_Sans_SC_Regular.ttf")
+
+            # 验证字体文件存在性
+            if not os.path.exists(font_path):
+                logger.warning(f"字体文件不存在: {font_path}")
+                return
+
+            # 加载字体
+            font_id = QFontDatabase.addApplicationFont(font_path)
+            if font_id == -1:
+                logger.error("字体加载失败，请检查文件格式")
+                return
+
+            # 获取字体族名称
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if not families:
+                logger.error("字体文件中未找到有效字体族")
+                return
+
+            logger.success(f"字体加载成功: {families[0]}")
+            self.font_loaded = True
+
+        except Exception as e:
+            logger.error(f"字体加载异常: {str(e)}")
 
     def _setup_ui(self):
         """初始化用户界面"""
@@ -260,19 +298,32 @@ class Plugin(PluginBase):
 
             # 动态样式调整
             has_sub = bool(sub_text)
-            text_color = "#FFFFFF" if isDarkTheme() else "#333333"
+            is_dark = isDarkTheme()
+            text_color = "#FFFFFF" if is_dark else "#333333"
+            font_family = "'HarmonyOS Sans SC'" if self.font_loaded else "sans-serif"
 
             # 根据歌词行数调整字号
-            main_size = "20px" if has_sub else "24px"
-            self.main_label.setStyleSheet(f"""
+            main_style = f"""
                 QLabel {{
-                    font-size: {main_size};
+                    font-family: {font_family};
                     color: {text_color};
-                    font-family: 'HarmonyOS Sans SC';
                     font-weight: bold;
                     margin: 0;
+                    font-size: {'20px' if has_sub else '24px'};
                 }}
-            """)
+            """
+
+            sub_style = f"""
+                QLabel {{
+                    font-family: {font_family};
+                    color: {"#CCCCCC" if is_dark else "#666666"};
+                    font-size: 14px;
+                    margin: 0;
+                }}
+            """
+
+            self.main_label.setStyleSheet(main_style)
+            self.sub_label.setStyleSheet(sub_style)
 
             # 布局高度调整
             if has_sub:
@@ -291,11 +342,14 @@ class Plugin(PluginBase):
         text_color = "#FFFFFF" if is_dark else "#333333"
         sub_color = "#CCCCCC" if is_dark else "#666666"
 
+        # 使用字体族名
+        font_family = "'HarmonyOS Sans SC'" if self.font_loaded else "sans-serif"
+
         # 标题样式
         self.title_label.setStyleSheet(f"""
             QLabel {{
                 color: {text_color};
-                font: bold 13px 'Microsoft YaHei';
+                font: bold 13px {font_family};
                 margin: 0;
                 max-height: 20px;
             }}
@@ -305,18 +359,27 @@ class Plugin(PluginBase):
         self.artist_label.setStyleSheet(f"""
             QLabel {{
                 color: {sub_color};
-                font: 11px 'Microsoft YaHei';
+                font: 11px {font_family};
                 margin: 0;
                 max-height: 16px;
             }}
         """)
 
-        # 副歌词样式
+        # 歌词样式
+        self.main_label.setStyleSheet(f"""
+            QLabel {{
+                font-family: {font_family};
+                font-weight: bold;
+                color: {text_color};
+                margin: 0;
+            }}
+        """)
+
+        # 扩展歌词样式
         self.sub_label.setStyleSheet(f"""
             QLabel {{
+                font-family: {font_family};
                 color: {sub_color};
-                font-size: 14px;
-                font-family: 'HarmonyOS Sans SC';
                 margin: 0;
             }}
         """)
