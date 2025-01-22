@@ -283,8 +283,8 @@ class Plugin(PluginBase):
         if not widget:
             return
 
-        if backgnd := widget.findChild(QFrame, 'backgnd'):
-            backgnd.layout().setContentsMargins(0, 0, 0, 0)
+        if background := widget.findChild(QFrame, 'background'):
+            background.layout().setContentsMargins(0, 0, 0, 0)
 
         # 清理旧布局
         if title := widget.findChild(QLabel, 'title'):
