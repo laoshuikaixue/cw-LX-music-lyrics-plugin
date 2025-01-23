@@ -375,8 +375,31 @@ class Plugin(PluginBase):
 
             # 加载成功后重置计数器
             self.current_cover_retries = 0
-            pixmap = pixmap.scaled(60, 60, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            self.cover_label.setImage(pixmap)
+
+            # 创建临时QPixmap用于裁剪
+            temp_pixmap = QPixmap(60, 60)
+            temp_pixmap.fill(Qt.transparent)
+
+            # 使用QPainter进行居中裁剪
+            painter = QPainter(temp_pixmap)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+            # 按比例缩放图片
+            scaled = pixmap.scaled(
+                60, 60,
+                Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation
+            )
+
+            # 计算绘制位置
+            x = (scaled.width() - 60) // 2
+            y = (scaled.height() - 60) // 2
+
+            # 绘制居中部分
+            painter.drawPixmap(0, 0, scaled, x, y, 60, 60)
+            painter.end()
+
+            self.cover_label.setImage(temp_pixmap)
             logger.success("封面图片加载成功")
 
         except requests.exceptions.RequestException as e:
