@@ -8,7 +8,7 @@ from typing import Tuple
 import requests
 from PyQt5.QtCore import QObject, pyqtSignal, Qt, QSize, QPropertyAnimation, QEasingCurve, pyqtProperty
 from PyQt5.QtGui import QPixmap, QImage, QFontDatabase, QColor, QPainter
-from PyQt5.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget, QSizePolicy, QFrame
+from PyQt5.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget, QSizePolicy
 from loguru import logger
 from qfluentwidgets import isDarkTheme, ImageLabel
 
@@ -232,7 +232,7 @@ class Plugin(PluginBase):
 
         # 封面加载重试计数器
         self.current_cover_retries = 0  # 当前封面加载尝试次数
-        self.current_loading_url = ""   # 当前正在加载的封面URL
+        self.current_loading_url = ""  # 当前正在加载的封面URL
 
     def execute(self):
         """插件启动入口"""
@@ -283,9 +283,6 @@ class Plugin(PluginBase):
         if not widget:
             return
 
-        if background := widget.findChild(QFrame, 'background'):
-            background.layout().setContentsMargins(0, 0, 0, 0)
-
         # 清理旧布局
         if title := widget.findChild(QLabel, 'title'):
             title.hide()
@@ -297,7 +294,7 @@ class Plugin(PluginBase):
 
             # 构建新布局
             main_layout = QHBoxLayout()
-            main_layout.setContentsMargins(14, 6, 7, 6)
+            main_layout.setContentsMargins(5, 2, 5, 3)
             main_layout.setSpacing(8)
 
             # 封面区域
@@ -309,25 +306,28 @@ class Plugin(PluginBase):
             # 右侧信息区域
             right_layout = QVBoxLayout()
             right_layout.setContentsMargins(0, 0, 0, 0)
-            right_layout.setSpacing(4)
+            right_layout.setSpacing(2)
 
             # 进度条
             self.progress_bar = ProgressBar()
             self.progress_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             right_layout.addWidget(self.progress_bar)
 
-            # 歌曲信息
+            # 歌曲信息水平布局
+            info_layout = QHBoxLayout()
+            info_layout.setContentsMargins(0, 0, 0, 0)
+            info_layout.setSpacing(4)
+
             self.title_label = QLabel("未知歌曲")
             self.artist_label = QLabel("未知歌手")
-            self.song_info_layout = QHBoxLayout()
-            self.song_info_layout.setAlignment(Qt.AlignLeft)
-            self.song_info_layout.setSpacing(6)
-            info_layout = QVBoxLayout()
-            info_layout.setContentsMargins(0, 0, 0, 0)
-            info_layout.setSpacing(0)
-            info_layout.addLayout(self.song_info_layout)
-            self.song_info_layout.addWidget(self.title_label)
-            self.song_info_layout.addWidget(self.artist_label)
+
+            # 设置尺寸策略
+            self.title_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            self.artist_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+            info_layout.addWidget(self.title_label)
+            info_layout.addWidget(self.artist_label)
+            info_layout.addStretch(1)  # 添加伸缩项占满剩余空间
             right_layout.addLayout(info_layout)
 
             # 歌词区域
@@ -433,7 +433,7 @@ class Plugin(PluginBase):
 
             # 文本信息更新（无论是否变化都更新显示）
             self.title_label.setText(current_song_name)
-            self.artist_label.setText(f"歌手: {current_artist}")
+            self.artist_label.setText(f"· {current_artist}" if current_artist else "")  # 添加间隔符号
 
             # 歌词处理
             lyrics = data.get('lyrics', '').strip()
@@ -451,24 +451,28 @@ class Plugin(PluginBase):
             has_sub = bool(sub_text)
             is_dark = isDarkTheme()
             text_color = "#FFFFFF" if is_dark else "#333333"
+            sub_color = "#CCCCCC" if is_dark else "#666666"
             font_family = "'HarmonyOS Sans SC'" if self.font_loaded else "sans-serif"
 
-            # 根据歌词行数调整字号
+            # 歌词字号设置
+            main_font_size = '15px' if has_sub else '24px'
+            sub_font_size = '9px'
+
             main_style = f"""
                 QLabel {{
                     font-family: {font_family};
                     color: {text_color};
                     font-weight: bold;
                     margin: 0;
-                    font-size: {'20px' if has_sub else '24px'};
+                    font-size: {main_font_size};
                 }}
             """
 
             sub_style = f"""
                 QLabel {{
                     font-family: {font_family};
-                    color: {"#CCCCCC" if is_dark else "#666666"};
-                    font-size: 14px;
+                    color: {sub_color};
+                    font-size: {sub_font_size};
                     margin: 0;
                 }}
             """
@@ -478,14 +482,33 @@ class Plugin(PluginBase):
 
             # 布局高度调整
             if has_sub:
-                self.main_label.setFixedHeight(38)
-                self.sub_label.setFixedHeight(14)
+                self.main_label.setFixedHeight(22)
+                self.sub_label.setFixedHeight(8)
             else:
                 self.main_label.setFixedHeight(30)
                 self.sub_label.setFixedHeight(0)
 
             # 更新主题颜色
             self._update_progress_colors()
+
+            # 歌曲信息样式
+            self.title_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {text_color};
+                    font: bold 13px {font_family};
+                    margin: 0;
+                    max-height: 20px;
+                }}
+            """)
+
+            self.artist_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {sub_color};
+                    font: 12px {font_family};
+                    margin: 0;
+                    max-height: 18px;
+                }}
+            """)
 
         except Exception as e:
             logger.error(f"更新失败: {str(e)}")
@@ -511,28 +534,9 @@ class Plugin(PluginBase):
         self.artist_label.setStyleSheet(f"""
             QLabel {{
                 color: {sub_color};
-                font: 11px {font_family};
+                font: 12px {font_family};
                 margin: 0;
-                max-height: 16px;
-            }}
-        """)
-
-        # 歌词样式
-        self.main_label.setStyleSheet(f"""
-            QLabel {{
-                font-family: {font_family};
-                font-weight: bold;
-                color: {text_color};
-                margin: 0;
-            }}
-        """)
-
-        # 扩展歌词样式
-        self.sub_label.setStyleSheet(f"""
-            QLabel {{
-                font-family: {font_family};
-                color: {sub_color};
-                margin: 0;
+                max-height: 18px;
             }}
         """)
 
