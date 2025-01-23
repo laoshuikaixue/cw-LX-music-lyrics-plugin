@@ -1,7 +1,7 @@
 {
     "name": "LX-music-Lyrics",
     "description": "一个用于显示LX-music软件歌词的插件。",
-    "version": "1.1.4",
+    "version": "1.1.5",
     "plugin_ver": 1,
     "author": "LaoShui",
     "settings": false,
