@@ -214,10 +214,10 @@ class Plugin(PluginBase):
         # UI组件
         self.sse_client: Optional[SSEClient] = None
         self.cover_label: Optional[ImageLabel] = None
-        self.title_label = None
-        self.artist_label = None
-        self.main_label = None
-        self.sub_label = None
+        self.title_label: Optional[QLabel] = None
+        self.artist_label: Optional[QLabel] = None
+        self.main_label: Optional[QLabel] = None
+        self.sub_label: Optional[QLabel] = None
         self.progress_bar: Optional[ProgressBar] = None
 
         # 颜色跟踪
@@ -274,23 +274,30 @@ class Plugin(PluginBase):
             self._current_bg = QColor(0, 0, 0, 30)
             self._current_fg = QColor(0, 0, 0, 150)
 
-        if self.progress_bar:
+        if self.progress_bar is not None:
             self.progress_bar.update_colors(self._current_bg, self._current_fg)
 
     def _setup_ui(self):
         """初始化用户界面"""
-        widget = self.method.get_widget(WIDGET_CODE)
-        if not widget:
-            return
+        try:
+            widget = self.method.get_widget(WIDGET_CODE)
+            if not widget:
+                logger.error("无法获取主控件")
+                return
 
-        # 清理旧布局
-        if title := widget.findChild(QLabel, 'title'):
-            title.hide()
-        if content_layout := widget.findChild(QHBoxLayout, 'contentLayout'):
+            # 清理旧布局
+            if title := widget.findChild(QLabel, 'title'):
+                title.hide()
+            content_layout = widget.findChild(QHBoxLayout, 'contentLayout')
+            if not content_layout:
+                logger.error("无法找到内容布局")
+                return
+
+            # 清理旧控件
             while content_layout.count():
-                if item := content_layout.takeAt(0):
-                    if item.widget():
-                        item.widget().deleteLater()
+                item = content_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
 
             # 构建新布局
             main_layout = QHBoxLayout()
@@ -343,6 +350,8 @@ class Plugin(PluginBase):
             main_layout.addLayout(right_layout)
             content_layout.addLayout(main_layout)
             self._update_theme_styles()
+        except Exception as e:
+            logger.error(f"UI初始化失败: {str(e)}")
 
     def _load_cover_image(self, url: str):
         """异步加载封面图片（带重试次数限制）"""
@@ -355,7 +364,8 @@ class Plugin(PluginBase):
             # 检查重试次数
             if self.current_cover_retries >= 5:
                 logger.info("封面加载失败次数超过5次，不再尝试")
-                self.cover_label.clear()
+                if self.cover_label is not None:
+                    self.cover_label.clear()
                 return
 
             # 增加尝试次数
@@ -399,17 +409,19 @@ class Plugin(PluginBase):
             painter.drawPixmap(0, 0, scaled, x, y, 60, 60)
             painter.end()
 
-            self.cover_label.setImage(temp_pixmap)
-            logger.success("封面图片加载成功")
+            if self.cover_label is not None:
+                self.cover_label.setImage(temp_pixmap)
+                logger.success("封面图片加载成功")
 
         except requests.exceptions.RequestException as e:
             logger.error(f"封面加载失败，第{self.current_cover_retries}次尝试 ({str(e)})")
-            if self.current_cover_retries >= 5:
+            if self.current_cover_retries >= 5 and self.cover_label is not None:
                 self.cover_label.clear()
                 logger.info("封面加载失败超过5次，停止尝试")
         except Exception as e:
             logger.error(f"封面处理异常: {str(e)}")
-            self.cover_label.clear()
+            if self.cover_label is not None:
+                self.cover_label.clear()
 
     def update_content(self, data: dict, widget_name: str):
         """更新UI内容"""
@@ -417,13 +429,14 @@ class Plugin(PluginBase):
             return
 
         try:
-            # 更新进度条
+            # 更新进度条（带空值检查）
             duration = data.get('duration', 0.0)
             progress = data.get('progress', 0.0)
-            if duration > 0 and progress >= 0:
-                self.progress_bar.update_progress(progress, duration)
-            else:
-                self.progress_bar.update_progress(0, 1)
+            if self.progress_bar is not None:
+                if duration > 0 and progress >= 0:
+                    self.progress_bar.update_progress(progress, duration)
+                else:
+                    self.progress_bar.update_progress(0, 1)
 
             # 获取当前歌曲信息
             current_song_name = data.get('title', '未知歌曲')
@@ -439,14 +452,14 @@ class Plugin(PluginBase):
                 self.current_cover_retries = 0
                 self.current_loading_url = current_cover_url
 
-                # 更新封面（仅当URL有效且尝试次数未超限时）
-                if current_cover_url and self.current_cover_retries < 5:
+                # 更新封面（带空值检查）
+                if current_cover_url and self.current_cover_retries < 5 and self.cover_label is not None:
                     threading.Thread(
                         target=self._load_cover_image,
                         args=(current_cover_url,),
                         daemon=True
                     ).start()
-                else:
+                elif self.cover_label is not None:
                     self.cover_label.clear()
 
                 # 保存当前信息
@@ -454,9 +467,11 @@ class Plugin(PluginBase):
                 self.last_artist = current_artist
                 self.last_cover_url = current_cover_url
 
-            # 文本信息更新（无论是否变化都更新显示）
-            self.title_label.setText(current_song_name)
-            self.artist_label.setText(f"· {current_artist}" if current_artist else "")  # 添加间隔符号
+            # 文本信息更新（带空值检查）
+            if self.title_label is not None:
+                self.title_label.setText(current_song_name)
+            if self.artist_label is not None:
+                self.artist_label.setText(f"· {current_artist}" if current_artist else "")
 
             # 歌词处理
             lyrics = data.get('lyrics', '').strip()
