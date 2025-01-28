@@ -22,6 +22,8 @@ WIDGET_WIDTH = 340
 # 服务配置
 SSE_URL = 'http://127.0.0.1:23330/subscribe-player-status'
 DEFAULT_LYRIC = '等待音乐软件传输数据...'
+DEFAULT_TITLE = '未知歌曲'
+DEFAULT_ARTIST = '未知歌手'
 
 
 class UpdateSignal(QObject):
@@ -97,6 +99,16 @@ class SSEClient:
 
         except requests.RequestException as e:
             logger.error(f"SSE连接错误: {str(e)}")
+
+            # 发送空数据触发清除
+            update_signal.update_signal.emit({
+                'lyrics': DEFAULT_LYRIC,
+                'title': DEFAULT_TITLE,
+                'artist': DEFAULT_ARTIST,
+                'cover_url': '',
+                'duration': 0,
+                'progress': 0
+            }, WIDGET_NAME)
             if self.running:
                 threading.Timer(5.0, self.start).start()
         except Exception as e:
@@ -325,8 +337,8 @@ class Plugin(PluginBase):
             info_layout.setContentsMargins(0, 0, 0, 0)
             info_layout.setSpacing(4)
 
-            self.title_label = QLabel("未知歌曲")
-            self.artist_label = QLabel("未知歌手")
+            self.title_label = QLabel(DEFAULT_TITLE)
+            self.artist_label = QLabel(DEFAULT_ARTIST)
 
             # 设置尺寸策略
             self.title_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
@@ -439,8 +451,8 @@ class Plugin(PluginBase):
                     self.progress_bar.update_progress(0, 1)
 
             # 获取当前歌曲信息
-            current_song_name = data.get('title', '未知歌曲')
-            current_artist = data.get('artist', '未知')
+            current_song_name = data.get('title', DEFAULT_TITLE)
+            current_artist = data.get('artist', DEFAULT_ARTIST)
             current_cover_url = data.get('cover_url', '')
 
             # 检查歌曲信息是否变化
@@ -476,10 +488,10 @@ class Plugin(PluginBase):
             # 歌词处理
             lyrics = data.get('lyrics', '').strip()
             if not lyrics:
-                main_text, sub_text = DEFAULT_LYRIC, ""
+                main_text, sub_text = "●  ●  ●", ""
             else:
                 parts = lyrics.split('\n', 1)
-                main_text = parts[0].strip() if parts else DEFAULT_LYRIC
+                main_text = parts[0].strip() if parts else "●  ●  ●"
                 sub_text = parts[1].strip() if len(parts) > 1 else ""
 
             if self.main_label is not None:
