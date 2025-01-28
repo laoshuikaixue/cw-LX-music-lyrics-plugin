@@ -429,7 +429,7 @@ class Plugin(PluginBase):
             return
 
         try:
-            # 更新进度条（带空值检查）
+            # 更新进度条
             duration = data.get('duration', 0.0)
             progress = data.get('progress', 0.0)
             if self.progress_bar is not None:
@@ -452,7 +452,7 @@ class Plugin(PluginBase):
                 self.current_cover_retries = 0
                 self.current_loading_url = current_cover_url
 
-                # 更新封面（带空值检查）
+                # 更新封面
                 if current_cover_url and self.current_cover_retries < 5 and self.cover_label is not None:
                     threading.Thread(
                         target=self._load_cover_image,
@@ -467,7 +467,7 @@ class Plugin(PluginBase):
                 self.last_artist = current_artist
                 self.last_cover_url = current_cover_url
 
-            # 文本信息更新（带空值检查）
+            # 文本信息更新
             if self.title_label is not None:
                 self.title_label.setText(current_song_name)
             if self.artist_label is not None:
@@ -482,8 +482,10 @@ class Plugin(PluginBase):
                 main_text = parts[0].strip() if parts else "●  ●  ●"
                 sub_text = parts[1].strip() if len(parts) > 1 else ""
 
-            self.main_label.setText(main_text)
-            self.sub_label.setText(sub_text)
+            if self.main_label is not None:
+                self.main_label.setText(main_text)
+            if self.sub_label is not None:
+                self.sub_label.setText(sub_text)
 
             # 动态样式调整
             has_sub = bool(sub_text)
@@ -515,38 +517,46 @@ class Plugin(PluginBase):
                 }}
             """
 
-            self.main_label.setStyleSheet(main_style)
-            self.sub_label.setStyleSheet(sub_style)
+            if self.main_label is not None:
+                self.main_label.setStyleSheet(main_style)
+            if self.sub_label is not None:
+                self.sub_label.setStyleSheet(sub_style)
 
             # 布局高度调整
-            if has_sub:
-                self.main_label.setFixedHeight(22)
-                self.sub_label.setFixedHeight(8)
-            else:
-                self.main_label.setFixedHeight(30)
-                self.sub_label.setFixedHeight(0)
+            if self.main_label is not None and self.sub_label is not None:
+                if has_sub:
+                    self.main_label.setFixedHeight(22)
+                    self.sub_label.setFixedHeight(8)
+                else:
+                    self.main_label.setFixedHeight(30)
+                    self.sub_label.setFixedHeight(0)
 
             # 更新主题颜色
             self._update_progress_colors()
 
             # 歌曲信息样式
-            self.title_label.setStyleSheet(f"""
+            title_style = f"""
                 QLabel {{
                     color: {text_color};
                     font: bold 13px {font_family};
                     margin: 0;
                     max-height: 20px;
                 }}
-            """)
+            """
 
-            self.artist_label.setStyleSheet(f"""
+            artist_style = f"""
                 QLabel {{
                     color: {sub_color};
                     font: 12px {font_family};
                     margin: 0;
                     max-height: 18px;
                 }}
-            """)
+            """
+
+            if self.title_label is not None:
+                self.title_label.setStyleSheet(title_style)
+            if self.artist_label is not None:
+                self.artist_label.setStyleSheet(artist_style)
 
         except Exception as e:
             logger.error(f"更新失败: {str(e)}")
@@ -559,24 +569,26 @@ class Plugin(PluginBase):
         font_family = "'HarmonyOS Sans SC'" if self.font_loaded else "sans-serif"
 
         # 标题样式
-        self.title_label.setStyleSheet(f"""
-            QLabel {{
-                color: {text_color};
-                font: bold 13px {font_family};
-                margin: 0;
-                max-height: 20px;
-            }}
-        """)
+        if self.title_label is not None:
+            self.title_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {text_color};
+                    font: bold 13px {font_family};
+                    margin: 0;
+                    max-height: 20px;
+                }}
+            """)
 
         # 歌手样式
-        self.artist_label.setStyleSheet(f"""
-            QLabel {{
-                color: {sub_color};
-                font: 12px {font_family};
-                margin: 0;
-                max-height: 18px;
-            }}
-        """)
+        if self.artist_label is not None:
+            self.artist_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {sub_color};
+                    font: 12px {font_family};
+                    margin: 0;
+                    max-height: 18px;
+                }}
+            """)
 
     def _start_sse_client(self):
         """启动SSE客户端线程"""
