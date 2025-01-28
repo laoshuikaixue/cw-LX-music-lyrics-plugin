@@ -1,7 +1,7 @@
 {
     "name": "LX-music-Lyrics",
     "description": "一个用于显示LX-music软件歌词的插件。",
-    "version": "1.1.5",
+    "version": "1.1.6",
     "plugin_ver": 1,
     "author": "LaoShui",
     "settings": false,
@@ -9,5 +9,5 @@
     "url": "https://github.com/laoshuikaixue/cw-LX-music-lyrics-plugin",
     "branch": "main",
 
-    "update_date": "2025/01/22"
+    "update_date": "2025/01/28"
 }
