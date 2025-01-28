@@ -476,10 +476,10 @@ class Plugin(PluginBase):
             # 歌词处理
             lyrics = data.get('lyrics', '').strip()
             if not lyrics:
-                main_text, sub_text = "●  ●  ●", ""
+                main_text, sub_text = DEFAULT_LYRIC, ""
             else:
                 parts = lyrics.split('\n', 1)
-                main_text = parts[0].strip() if parts else "●  ●  ●"
+                main_text = parts[0].strip() if parts else DEFAULT_LYRIC
                 sub_text = parts[1].strip() if len(parts) > 1 else ""
 
             if self.main_label is not None:
@@ -587,6 +587,29 @@ class Plugin(PluginBase):
                     font: 12px {font_family};
                     margin: 0;
                     max-height: 18px;
+                }}
+            """)
+
+        # 主歌词默认样式
+        if self.main_label is not None:
+            self.main_label.setStyleSheet(f"""
+                QLabel {{
+                    font-family: {font_family};
+                    color: {text_color};
+                    font-weight: bold;
+                    margin: 0;
+                    font-size: 24px;
+                }}
+            """)
+
+        # 副歌词默认样式
+        if self.sub_label is not None:
+            self.sub_label.setStyleSheet(f"""
+                QLabel {{
+                    font-family: {font_family};
+                    color: {sub_color};
+                    font-size: 9px;
+                    margin: 0;
                 }}
             """)
 
